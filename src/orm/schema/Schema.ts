@@ -4,13 +4,19 @@ export interface TableSchema<T> {
     tableName: string,
     fields: TableSchemaFields<T>
 }
-export type TableSchemaFields<T> = {
-    [K in keyof T]: T[K] extends string ? Record<keyof T, StringFieldMetadata >[K] :
-    T[K] extends number ? Record<keyof T, NumberFieldMetadata>[K] :
-    T[K] extends Date ? Record<keyof T, DateFieldMetadata>[K] :
-    Record<keyof T, TableFieldMetadata>[K]
-
-}
+    export type TableSchemaFields<T> = {
+        [K in keyof T]: T[K] extends string ? 
+            string extends T[K] ? Record<keyof T, StringFieldMetadata>[K] : Record<keyof T, EnumFieldMetadata<T[K]>>[K] :
+        T[K] extends number ? Record<keyof T, NumberFieldMetadata>[K] :
+        T[K] extends Date ? Record<keyof T, DateFieldMetadata>[K] :
+        T[K] extends string[] ? Record<keyof T, TableFieldMetadata>[K] :
+        Record<keyof T, TableFieldMetadata>[K]
+    }
+    
+    interface EnumFieldMetadata<T> extends TableFieldMetadata {
+        type: 'enum'
+        enumValues: T[]
+    }
 
 interface TableFieldMetadata {
     type?: SchemaFieldType,
