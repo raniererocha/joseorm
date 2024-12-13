@@ -11,7 +11,9 @@ describe('Jose', () => {
     let repository: Repository<{ id: number | string, name: string, email: string }>
 
     beforeEach(() => {
-        jose = Jose.create()
+        jose = Jose.create({
+            storage: 'memory'
+        })
         testSchema = j.table<TestSchema>('test', {
             id: j.number().primaryKey("serial"),
             name: j.string(),
