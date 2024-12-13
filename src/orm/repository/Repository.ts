@@ -79,12 +79,10 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
 
         for (const [key, fieldMeta] of Object.entries(fields)) {
 
-            //Valida se o campo é obrigatório.
             if (fieldMeta.required && !data[key as keyof T] && fieldMeta.defaultValue === undefined) {
                 throw new FieldValidationError(`O campo ${key} é obrigatório.`)
             }
 
-            // Validação de campos únicos
             if (fieldMeta.isUnique && data[key as keyof T] !== undefined) {
 
 
@@ -95,7 +93,6 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
                 }
             }
 
-            //Validação de tipos
             if (data[key as keyof T]) {
                 const actualType = typeof data[key as keyof T]
 
@@ -124,6 +121,70 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
 
         }
     }
+
+
+
+
+    private validateBulkData(data: Partial<T>[]): void {
+        const fields = this.modelConstructor.fields;
+
+        const requiredFields = new Set<string>();
+        const uniqueFields = new Map<string, Set<any>>();
+        const typeValidators = new Map<string, (value: any) => boolean>();
+
+        for (const [key, field] of Object.entries(fields)) {
+            if (field.required && field.defaultValue === undefined) {
+                requiredFields.add(key);
+            }
+            if (field.isUnique) {
+                uniqueFields.set(key, new Set(this.getItems().map(item => item[key as keyof T])));
+            }
+
+            switch (field.type) {
+                case 'string':
+                    typeValidators.set(key, (value) => typeof value === 'string');
+                    break;
+                case 'number':
+                    typeValidators.set(key, (value) => typeof value === 'number');
+                    break;
+                case 'boolean':
+                    typeValidators.set(key, (value) => typeof value === 'boolean');
+                    break;
+                case 'enum':
+                    const validValues = new Set(field.enumValues);
+                    typeValidators.set(key, (value) => validValues.has(value));
+                    break;
+            }
+        }
+
+        for (let i = 0; i < data.length; i++) {
+            const item = data[i];
+
+            for (const field of requiredFields) {
+                if (!item[field as keyof T]) {
+                    throw new FieldValidationError(`O campo ${field} é obrigatório.`);
+                }
+            }
+
+            for (const [field, valueSet] of uniqueFields) {
+                const value = item[field as keyof T];
+                if (value !== undefined) {
+                    if (valueSet.has(value)) {
+                        throw new Error(`Campo ${field} deve ser único`);
+                    }
+                    valueSet.add(value);
+                }
+            }
+
+            for (const [field, validator] of typeValidators) {
+                const value = item[field as keyof T];
+                if (value !== undefined && !validator(value)) {
+                    throw new Error(`Invalid type for field ${field}`);
+                }
+            }
+        }
+    }
+
     private generateId(): string | number {
         const primaryField = Object.values(this.modelConstructor.fields).find((fieldMeta) => fieldMeta.isPrimaryKey)
 
@@ -232,21 +293,31 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
 
 
     createMany(data: Partial<T>[]): T[] {
-        const items = this.getItems()
-        const newItems = data.map((item) => {
-            this.validateData(item)
-            const newId = this.generateId()
-            const newItem = {
-                ...item,
-                id: item.id || newId,
-                createdAt: new Date().toISOString()
-            } as unknown as T
-            items.push(newItem)
-            this.updateOnSystemTable('create', newId)
-            return newItem
-        })
-        this.saveItems(items)
-        return newItems
+        const BATCH_SIZE = 50000;
+        const items = this.getItems();
+
+        this.validateBulkData(data);
+
+        const totalSize = items.length + data.length;
+        const result = new Array(totalSize);
+
+        const timestamp = new Date().toISOString();
+        const startId = this.getLastItemId();
+
+        let lastId;
+        for (let i = 0; i < data.length; i++) {
+            lastId = typeof startId === 'number' ? startId + i + 1 : Math.random().toString(36).substring(2, 9);
+            result[items.length + i] = {
+                ...data[i],
+                id: data[i].id || lastId,
+                createdAt: timestamp
+            } as unknown as T;
+        }
+
+        this.updateOnSystemTable('create', lastId);
+        this.saveItems(result);
+
+        return result;
     }
 
 
@@ -274,33 +345,25 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
     }
 
 
+
+
     update(where: WhereQuery<T>, data: Partial<T>): void {
         const items = this.getItems();
+        const timestamp = new Date().toISOString();
+        const conditions = Object.entries(where);
 
-        const updatedItems = items.map((item) => {
+        const updatedItems = new Array(items.length);
+        for (let i = 0; i < items.length; i++) {
             let shouldUpdate = true;
+            const item = items[i];
 
-            // Verificar condições de filtragem com base no `where`
-            for (const [key, condition] of Object.entries(where)) {
+            for (const [key, condition] of conditions) {
                 const fieldValue = item[key as keyof T];
-
                 if (typeof condition === 'object') {
-                    if (condition.equals !== undefined && fieldValue !== condition.equals) {
-                        shouldUpdate = false;
-                        break;
-                    }
-
-                    if ('greaterThan' in condition && typeof fieldValue === 'number' && fieldValue <= condition.greaterThan) {
-                        shouldUpdate = false;
-                        break;
-                    }
-
-                    if ('lessThan' in condition && typeof fieldValue === 'number' && fieldValue >= condition.lessThan) {
-                        shouldUpdate = false;
-                        break;
-                    }
-
-                    if ('contains' in condition && typeof fieldValue === 'string' && !fieldValue.includes(condition.contains)) {
+                    if ((condition.equals !== undefined && fieldValue !== condition.equals) ||
+                        ('greaterThan' in condition && typeof fieldValue === 'number' && fieldValue <= condition.greaterThan) ||
+                        ('lessThan' in condition && typeof fieldValue === 'number' && fieldValue >= condition.lessThan) ||
+                        ('contains' in condition && typeof fieldValue === 'string' && !fieldValue.includes(condition.contains))) {
                         shouldUpdate = false;
                         break;
                     }
@@ -310,21 +373,11 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
                 }
             }
 
-            if (shouldUpdate) {
-                return {
-                    ...item,
-                    ...data,
-                    updatedAt: new Date().toISOString()
-                } as unknown as T;
-            }
-
-            return item;
-        });
+            updatedItems[i] = shouldUpdate ? { ...item, ...data, updatedAt: timestamp } : item;
+        }
 
         this.updateOnSystemTable('update');
         this.saveItems(updatedItems);
-        
-        
     }
 
 
@@ -347,24 +400,69 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
     }
 
 
-    delete(where: WhereQuery<T>): T[] {
-        let items = this.whereFilter(where)
-        const deletedItems = items as unknown as T[]
 
-        items = this.getItems().filter((item) => !deletedItems.includes(item))
-        
-        this.updateOnSystemTable('update')
-        this.saveItems(items)
-        console.log('items: ', items)
-        return deletedItems
+    delete(where: WhereQuery<T>): T[] {
+        const items = this.getItems();
+        const conditions = Object.entries(where);
+
+        const keepItems: T[] = [];
+        const deletedItems: T[] = [];
+
+        for (const item of items) {
+            let shouldDelete = true;
+
+            for (const [key, condition] of conditions) {
+                const fieldValue = item[key as keyof T];
+                if (typeof condition === 'object') {
+                    if ((condition.equals !== undefined && fieldValue !== condition.equals) ||
+                        ('greaterThan' in condition && typeof fieldValue === 'number' && fieldValue <= condition.greaterThan) ||
+                        ('lessThan' in condition && typeof fieldValue === 'number' && fieldValue >= condition.lessThan) ||
+                        ('contains' in condition && typeof fieldValue === 'string' && !fieldValue.includes(condition.contains))) {
+                        shouldDelete = false;
+                        break;
+                    }
+                } else if (condition !== undefined && fieldValue !== condition) {
+                    shouldDelete = false;
+                    break;
+                }
+            }
+
+            (shouldDelete ? deletedItems : keepItems).push(item);
+        }
+
+        this.updateOnSystemTable('update');
+        this.saveItems(keepItems);
+        return deletedItems;
     }
+
 
     count(where?: WhereQuery<T>): number {
+        if (!where) return this.getItems().length;
 
-        if (where) {
-            return this.whereFilter(where).length
+        const items = this.getItems();
+        const conditions = Object.entries(where);
+        let count = 0;
+
+        for (const item of items) {
+            let matches = true;
+            for (const [key, condition] of conditions) {
+                const fieldValue = item[key as keyof T];
+                if (typeof condition === 'object') {
+                    if ((condition.equals !== undefined && fieldValue !== condition.equals) ||
+                        ('greaterThan' in condition && typeof fieldValue === 'number' && fieldValue <= condition.greaterThan) ||
+                        ('lessThan' in condition && typeof fieldValue === 'number' && fieldValue >= condition.lessThan) ||
+                        ('contains' in condition && typeof fieldValue === 'string' && !fieldValue.includes(condition.contains))) {
+                        matches = false;
+                        break;
+                    }
+                } else if (condition !== undefined && fieldValue !== condition) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) count++;
         }
-        return this.getItems().length
-    }
 
+        return count;
+    }
 }
