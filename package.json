@@ -21,9 +21,14 @@
     "build": "tsup"
   },
   "keywords": [],
-  "author": "",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/raniererocha/joseorm"
+  },
+  "homepage": "https://github.com/raniererocha/joseorm",
+  "author": "Raniere Rocha",
   "license": "MIT",
-  "description": "",
+  "description": "Um ORM para localStorage agnóstico de frameworks",
   "devDependencies": {
     "poku": "^2.7.1",
     "tsup": "^8.3.5",
