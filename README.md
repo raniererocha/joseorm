@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./logo.svg" alt="Jose ORM Logo" width="200" />
+  <img src="./logo.svg" alt="Jose ORM Logo" />
 </p>
 
 # Jose ORM
