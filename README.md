@@ -1,6 +1,12 @@
+<p align="center">
+  <img src="./logo.svg" alt="Jose ORM Logo" width="200" />
+</p>
+
 # Jose ORM
 
 Jose ORM é um poderoso ORM (Object-Relational Mapping) para localStorage com tipagem segura, agnóstico de framework que torna a persistência de dados nos navegadores simples e confiável.
+
+> **Nota**: Este projeto está em desenvolvimento ativo e ainda não está pronto para uso em produção. Lembre-se de deixar um feedback ou abrir uma issue se encontrar problemas.
 
 ## Por que usar Jose ORM?
 
