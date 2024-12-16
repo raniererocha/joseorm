@@ -1,4 +1,4 @@
-import { BooleanTypeError, EnumTypeError, FieldValidationError, NotFoundError, NotFoundFieldsError, NotFoundPrimaryKeyError, NumberTypeError, StringTypeError } from "../../assets/Errors";
+import { BooleanTypeError, EnumTypeError, FieldValidationError, NumberTypeError, StringTypeError } from "../../assets/Errors";
 import { TableSchema } from "../schema/Schema";
 
 export interface RepositoryStorageInterface {
@@ -10,7 +10,6 @@ export interface RepositoryStorageInterface {
     clear(): void
     size(): number
 }
-
 type QueryOperators<T> = {
     equals?: T;
     greaterThan?: T;
@@ -18,8 +17,6 @@ type QueryOperators<T> = {
     contains?: string;
     in?: T[]
 }
-
-
 type WhereQuery<T> = {
     [K in keyof T]?: T[K] extends number
     ? QueryOperators<number>
@@ -29,12 +26,7 @@ type WhereQuery<T> = {
     ? { equals?: boolean }
     : QueryOperators<T[K]>
 }
-
-
-
 type UpdateSystemTableActions = "create" | "update"
-
-
 export class Repository<T extends { id: string | number, createdAt?: string, updatedAt?: string }> {
 
     private modelConstructor: TableSchema<T>
@@ -53,25 +45,35 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
         return this.modelConstructor.tableName
     }
     private ensureTable(): void {
-        const systemStorage = this.storage.getItem('system')
-        const SystemTableData = systemStorage.find(item => item.table === this.tableName)
+        const systemStorage = this.storage.getItem('system') || [];
+
+        // Verifica se já existe um registro na tabela "system" para a tabela atual
+        const systemTableData = systemStorage.find(item => item.table === this.tableName);
+
         if (!this.systemTableId) {
-            this.systemTableId = Math.random().toString(36).substring(2, 9)
-        }
-        const createPayload = {
-            id: this.systemTableId,
-            table: this.tableName,
-            tableLastId: 0,
-            tableCreatedDate: new Date().toISOString(),
-            tableUpdatedDate: undefined
-        }
-        if (!SystemTableData) {
-            this.storage.setItem("system", [createPayload])
-        }
-        if (!this.storage.getItem(this.tableName)) {
-            this.storage.setItem(this.tableName, [])
+            this.systemTableId = Math.random().toString(36).substring(2, 9);
         }
 
+        if (!systemTableData) {
+            // Cria um novo registro na tabela "system" para a tabela atual
+            const createPayload = {
+                id: this.systemTableId,
+                table: this.tableName,
+                tableLastId: 0, // Inicializa com 0
+                tableCreatedDate: new Date().toISOString(),
+                tableUpdatedDate: undefined
+            };
+            systemStorage.push(createPayload);
+            this.storage.setItem('system', systemStorage);
+        } else {
+            // Recupera o ID da tabela existente
+            this.systemTableId = systemTableData.id;
+        }
+
+        // Garante que a tabela atual exista no armazenamento
+        if (!this.storage.getItem(this.tableName)) {
+            this.storage.setItem(this.tableName, []);
+        }
     }
     private validateData(data: Partial<T>): void {
         const fields = this.modelConstructor.fields
@@ -121,10 +123,6 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
 
         }
     }
-
-
-
-
     private validateBulkData(data: Partial<T>[]): void {
         const fields = this.modelConstructor.fields;
 
@@ -184,23 +182,29 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
             }
         }
     }
-
     private generateId(): string | number {
-        const primaryField = Object.values(this.modelConstructor.fields).find((fieldMeta) => fieldMeta.isPrimaryKey)
+        const primaryField = Object.values(this.modelConstructor.fields).find((fieldMeta) => fieldMeta.isPrimaryKey);
 
         if (!primaryField) {
-            throw new Error("Não foi possível gerar o ID")
+            throw new Error("Não foi possível gerar o ID");
         }
+
         if (primaryField.primaryKeyType === "cuid") {
-            return Math.random().toString(36).substring(2, 9)
+            return Math.random().toString(36).substring(2, 9);
         }
-        const lastItemId = this.getLastItemId()
-        return typeof lastItemId === "number" ? lastItemId + 1 : 1
+
+        const lastItemId = this.getLastItemId();
+        const newId = typeof lastItemId === "number" ? lastItemId + 1 : 1;
+
+        // Atualiza o último ID utilizado na tabela "system"
+        this.updateOnSystemTable(newId);
+
+        return newId;
     }
     private getLastItemId(): string | number {
-        const storage = this.storage.getItem("system")
-        const systemTableData = storage.find((item) => item.id === this.systemTableId)
-        return systemTableData?.tableLastId || 0
+        const systemStorage = this.storage.getItem("system") || [];
+        const systemTableData = systemStorage.find((item) => item.id === this.systemTableId);
+        return systemTableData?.tableLastId || 0;
     }
     private saveItems(items: T[]): void {
         this.storage.setItem(this.tableName, items)
@@ -208,36 +212,29 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
     private getItems(): T[] {
         return this.storage.getItem(this.tableName) || []
     }
-    private updateOnSystemTable(action: UpdateSystemTableActions, lastId?: string | number): void {
-        //verifique se a tabela "system" existe, caso exista procure o registro com o nome da tablea atual
-        //se não existir registro algum com o nome da tabela, crie um. Caso exista, atualize o registro com o ultimo id gerado e com a data e hora da ultima atualização
-        const systemStorage = this.storage.getItem('system')
-        if (!this.systemTableId) {
-            this.ensureTable()
-        }
-        const SystemTableData = systemStorage.findIndex(item => item.id === this.systemTableId)
+    private updateOnSystemTable(lastId: string | number): void {
+        const systemStorage = this.storage.getItem('system') || [];
 
-        if (SystemTableData === -1) {
+        const systemTableIndex = systemStorage.findIndex(item => item.id === this.systemTableId);
+
+        if (systemTableIndex === -1) {
             const createPayload = {
-                id: Math.random().toString(36).substring(2, 9),
+                id: this.systemTableId,
                 table: this.tableName,
                 tableLastId: lastId,
                 tableCreatedDate: new Date().toISOString(),
-                tableUpdatedDate: undefined
-            }
-            systemStorage.push(createPayload)
-        }
-        else {
-            const updatePayload = {
-                id: this.systemTableId,
-                table: this.tableName,
-                tableLastId: lastId || systemStorage[SystemTableData].tableLastId,
-                tableCreatedDate: new Date().toISOString(),
                 tableUpdatedDate: new Date().toISOString()
-            }
-            systemStorage[SystemTableData] = updatePayload
+            };
+            systemStorage.push(createPayload);
+        } else {
+            systemStorage[systemTableIndex] = {
+                ...systemStorage[systemTableIndex],
+                tableLastId: lastId,
+                tableUpdatedDate: new Date().toISOString()
+            };
         }
-        this.storage.setItem('system', systemStorage)
+
+        this.storage.setItem('system', systemStorage);
     }
     private whereFilter(where?: WhereQuery<T>): T[] {
         let items = this.getItems()
@@ -286,7 +283,7 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
 
 
         items.push(newItem)
-        this.updateOnSystemTable('create', newId)
+        this.updateOnSystemTable(newId)
         this.saveItems(items)
         return newItem
     }
@@ -304,7 +301,7 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
         const timestamp = new Date().toISOString();
         const startId = this.getLastItemId();
 
-        let lastId;
+        let lastId: string | number = startId;
         for (let i = 0; i < data.length; i++) {
             lastId = typeof startId === 'number' ? startId + i + 1 : Math.random().toString(36).substring(2, 9);
             result[items.length + i] = {
@@ -314,7 +311,7 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
             } as unknown as T;
         }
 
-        this.updateOnSystemTable('create', lastId);
+        this.updateOnSystemTable(lastId);
         this.saveItems(result);
 
         return result;
@@ -330,6 +327,7 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
 
         return items;
     }
+    
 
     findUnique(where: Partial<T>): T | null {
         const items = this.getItems()
@@ -343,8 +341,6 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
         })
         return item || null
     }
-
-
 
 
     update(where: WhereQuery<T>, data: Partial<T>): void {
@@ -398,7 +394,6 @@ export class Repository<T extends { id: string | number, createdAt?: string, upd
         this.saveItems(items)
         return newItem
     }
-
 
 
     delete(where: WhereQuery<T>): T[] {
